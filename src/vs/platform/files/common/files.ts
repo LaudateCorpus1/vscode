@@ -238,7 +238,7 @@ export interface IFileService {
 	 * Note: recursive file watching is not supported from this method. Only events from files
 	 * that are direct children of the provided resource will be reported.
 	 */
-	watch(resource: URI): IDisposable;
+	watch(resource: URI, options?: IWatchOptions): IDisposable;
 
 	/**
 	 * Frees up any resources occupied by this service.
@@ -428,9 +428,16 @@ export interface IWatchOptions {
 	readonly recursive: boolean;
 
 	/**
-	 * A set of paths to exclude from watching.
+	 * A set of glob patterns or paths to exclude from watching.
 	 */
 	excludes: string[];
+
+	/**
+	 * An optional set of glob patterns or paths to include for
+	 * watching. If not provided, all paths are considered for
+	 * events.
+	 */
+	includes?: string[];
 }
 
 export const enum FileSystemProviderCapabilities {
