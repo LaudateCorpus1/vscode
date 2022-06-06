@@ -4,12 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { distinct } from 'vs/base/common/arrays';
-import { CancellationToken, CancellationTokenSource } from 'vs/base/common/cancellation';
-import { IDataTransfer, IDataTransferItem } from 'vs/base/common/dataTransfer';
+import { CancellationToken } from 'vs/base/common/cancellation';
+import { createStringDataTransferItem, VSDataTransfer } from 'vs/base/common/dataTransfer';
 import { Disposable } from 'vs/base/common/lifecycle';
 import { Mimes } from 'vs/base/common/mime';
 import { relativePath } from 'vs/base/common/resources';
 import { URI } from 'vs/base/common/uri';
+import { toVSDataTransfer } from 'vs/editor/browser/dnd';
 import { ICodeEditor } from 'vs/editor/browser/editorBrowser';
 import { registerEditorContribution } from 'vs/editor/browser/editorExtensions';
 import { IPosition } from 'vs/editor/common/core/position';
@@ -18,9 +19,10 @@ import { IEditorContribution } from 'vs/editor/common/editorCommon';
 import { DocumentOnDropEditProvider, SnippetTextEdit } from 'vs/editor/common/languages';
 import { ITextModel } from 'vs/editor/common/model';
 import { ILanguageFeaturesService } from 'vs/editor/common/services/languageFeatures';
+import { CodeEditorStateFlag, EditorStateCancellationTokenSource } from 'vs/editor/contrib/editorState/browser/editorState';
 import { performSnippetEdit } from 'vs/editor/contrib/snippet/browser/snippetController2';
 import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
-import { extractEditorsDropData, FileAdditionalNativeProperties } from 'vs/platform/dnd/browser/dnd';
+import { extractEditorsDropData } from 'vs/platform/dnd/browser/dnd';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
 
@@ -75,76 +77,38 @@ export class DropIntoEditorController extends Disposable implements IEditorContr
 			return;
 		}
 
-		const cts = new CancellationTokenSource();
-		editor.onDidDispose(() => cts.cancel());
-		model.onDidChangeContent(() => cts.cancel());
+		const tokenSource = new EditorStateCancellationTokenSource(editor, CodeEditorStateFlag.Value);
+		try {
+			const providers = this._languageFeaturesService.documentOnDropEditProvider.ordered(model);
+			for (const provider of providers) {
+				const edit = await provider.provideDocumentOnDropEdits(model, position, ourDataTransfer, tokenSource.token);
+				if (tokenSource.token.isCancellationRequested || editor.getModel().getVersionId() !== modelVersionNow) {
+					return;
+				}
 
-		const providers = this._languageFeaturesService.documentOnDropEditProvider.ordered(model);
-		for (const provider of providers) {
-			const edit = await provider.provideDocumentOnDropEdits(model, position, ourDataTransfer, cts.token);
-			if (cts.token.isCancellationRequested || editor.getModel().getVersionId() !== modelVersionNow) {
-				return;
+				if (edit) {
+					performSnippetEdit(editor, edit);
+					return;
+				}
 			}
-
-			if (edit) {
-				performSnippetEdit(editor, edit);
-				return;
-			}
+		} finally {
+			tokenSource.dispose();
 		}
 	}
 
-	public async extractDataTransferData(dragEvent: DragEvent): Promise<IDataTransfer> {
-		const textEditorDataTransfer: IDataTransfer = new Map<string, IDataTransferItem>();
+	public async extractDataTransferData(dragEvent: DragEvent): Promise<VSDataTransfer> {
 		if (!dragEvent.dataTransfer) {
-			return textEditorDataTransfer;
+			return new VSDataTransfer();
 		}
 
-		for (const item of dragEvent.dataTransfer.items) {
-			const type = item.type;
-			if (item.kind === 'string') {
-				const asStringValue = new Promise<string>(resolve => item.getAsString(resolve));
-				textEditorDataTransfer.set(type, {
-					asString: () => asStringValue,
-					asFile: () => undefined,
-					value: undefined
-				});
-			} else if (item.kind === 'file') {
-				const file = item.getAsFile();
-				if (file) {
-					textEditorDataTransfer.set(type, {
-						asString: () => Promise.resolve(''),
-						asFile: () => {
-							const uri = (file as FileAdditionalNativeProperties).path ? URI.parse((file as FileAdditionalNativeProperties).path!) : undefined;
-							return {
-								name: file.name,
-								uri: uri,
-								data: async () => {
-									return new Uint8Array(await file.arrayBuffer());
-								},
-							};
-						},
-						value: undefined
-					});
-				}
-			}
-		}
+		const textEditorDataTransfer = toVSDataTransfer(dragEvent.dataTransfer);
+		const editorData = (await this._instantiationService.invokeFunction(extractEditorsDropData, dragEvent))
+			.filter(input => input.resource)
+			.map(input => input.resource!.toString());
 
-		if (!textEditorDataTransfer.has(Mimes.uriList)) {
-			const editorData = (await this._instantiationService.invokeFunction(extractEditorsDropData, dragEvent))
-				.filter(input => input.resource)
-				.map(input => input.resource!.toString());
-
-			if (editorData.length) {
-				const added: IDataTransfer = new Map<string, IDataTransferItem>();
-
-				const str = distinct(editorData).join('\n');
-				added.set(Mimes.uriList.toLowerCase(), {
-					asFile: () => undefined,
-					asString: async () => str,
-					value: str,
-				});
-				return added;
-			}
+		if (editorData.length) {
+			const str = distinct(editorData).join('\n');
+			textEditorDataTransfer.replace(Mimes.uriList, createStringDataTransferItem(str));
 		}
 
 		return textEditorDataTransfer;
@@ -157,7 +121,7 @@ class DefaultOnDropProvider implements DocumentOnDropEditProvider {
 		@IWorkspaceContextService private readonly _workspaceContextService: IWorkspaceContextService,
 	) { }
 
-	async provideDocumentOnDropEdits(model: ITextModel, position: IPosition, dataTransfer: IDataTransfer, _token: CancellationToken): Promise<SnippetTextEdit | undefined> {
+	async provideDocumentOnDropEdits(model: ITextModel, position: IPosition, dataTransfer: VSDataTransfer, _token: CancellationToken): Promise<SnippetTextEdit | undefined> {
 		const range = new Range(position.lineNumber, position.column, position.lineNumber, position.column);
 
 		const urlListEntry = dataTransfer.get('text/uri-list');
@@ -207,3 +171,4 @@ class DefaultOnDropProvider implements DocumentOnDropEditProvider {
 
 
 registerEditorContribution(DropIntoEditorController.ID, DropIntoEditorController);
+

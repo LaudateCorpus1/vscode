@@ -8,6 +8,7 @@ import { IMouseWheelEvent } from 'vs/base/browser/mouseEvent';
 import { Emitter, Event } from 'vs/base/common/event';
 import { Disposable, DisposableStore, MutableDisposable } from 'vs/base/common/lifecycle';
 import { URI } from 'vs/base/common/uri';
+import { generateUuid } from 'vs/base/common/uuid';
 import { IContextKey, IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 import { ExtensionIdentifier } from 'vs/platform/extensions/common/extensions';
 import { ILayoutService } from 'vs/platform/layout/browser/layoutService';
@@ -43,6 +44,7 @@ export class OverlayWebview extends Disposable implements IOverlayWebview {
 	private _findWidgetEnabled: IContextKey<boolean> | undefined;
 
 	public readonly id: string;
+	public readonly origin: string;
 
 	public constructor(
 		initInfo: WebviewInitInfo,
@@ -53,6 +55,8 @@ export class OverlayWebview extends Disposable implements IOverlayWebview {
 		super();
 
 		this.id = initInfo.id;
+		this.origin = initInfo.origin ?? generateUuid();
+
 		this._extension = initInfo.extension;
 		this._options = initInfo.options;
 		this._contentOptions = initInfo.contentOptions;
@@ -175,8 +179,8 @@ export class OverlayWebview extends Disposable implements IOverlayWebview {
 		this._container.style.height = `${dimension ? dimension.height : frameRect.height}px`;
 
 		if (clippingContainer) {
-			const clip = computeClippingRect(frameRect, clippingContainer);
-			this._container.style.clip = `rect(${clip.top}px, ${clip.right}px, ${clip.bottom}px, ${clip.left}px)`;
+			const { top, left, right, bottom } = computeClippingRect(frameRect, clippingContainer);
+			this._container.style.clipPath = `polygon(${left}px ${top}px, ${right}px ${top}px, ${right}px ${bottom}px, ${left}px ${bottom}px)`;
 		}
 	}
 
@@ -186,7 +190,13 @@ export class OverlayWebview extends Disposable implements IOverlayWebview {
 		}
 
 		if (!this._webview.value) {
-			const webview = this._webviewService.createWebviewElement({ id: this.id, options: this._options, contentOptions: this._contentOptions, extension: this.extension });
+			const webview = this._webviewService.createWebviewElement({
+				id: this.id,
+				origin: this.origin,
+				options: this._options,
+				contentOptions: this._contentOptions,
+				extension: this.extension,
+			});
 			this._webview.value = webview;
 			webview.state = this._state;
 

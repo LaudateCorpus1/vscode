@@ -90,7 +90,7 @@ async function createModel(context: ExtensionContext, outputChannelLogger: Outpu
 			lines.pop();
 		}
 
-		outputChannelLogger.logGitCommand(lines.join('\n'));
+		outputChannelLogger.log(lines.join('\n'));
 	};
 	git.onOutput.addListener('log', onOutput);
 	disposables.push(toDisposable(() => git.onOutput.removeListener('log', onOutput)));
@@ -192,7 +192,9 @@ export async function _activate(context: ExtensionContext): Promise<GitExtension
 		outputChannelLogger.logWarning(err.message);
 
 		/* __GDPR__
-			"git.missing" : {}
+			"git.missing" : {
+				"owner": "lszomoru"
+			}
 		*/
 		telemetryReporter.sendTelemetryEvent('git.missing');
 
