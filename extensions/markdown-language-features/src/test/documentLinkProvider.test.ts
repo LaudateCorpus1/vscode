@@ -6,18 +6,21 @@
 import * as assert from 'assert';
 import 'mocha';
 import * as vscode from 'vscode';
-import { MdLinkProvider } from '../languageFeatures/documentLinkProvider';
+import { MdLinkProvider, MdVsCodeLinkProvider } from '../languageFeatures/documentLinkProvider';
 import { noopToken } from '../util/cancellation';
 import { InMemoryDocument } from '../util/inMemoryDocument';
 import { createNewMarkdownEngine } from './engine';
-import { assertRangeEqual, joinLines } from './util';
+import { InMemoryWorkspaceMarkdownDocuments } from './inMemoryWorkspace';
+import { assertRangeEqual, joinLines, workspacePath } from './util';
 
-
-const testFile = vscode.Uri.joinPath(vscode.workspace.workspaceFolders![0].uri, 'x.md');
 
 function getLinksForFile(fileContents: string) {
-	const doc = new InMemoryDocument(testFile, fileContents);
-	const provider = new MdLinkProvider(createNewMarkdownEngine());
+	const doc = new InMemoryDocument(workspacePath('x.md'), fileContents);
+	const workspace = new InMemoryWorkspaceMarkdownDocuments([doc]);
+
+	const engine = createNewMarkdownEngine();
+	const linkProvider = new MdLinkProvider(engine, workspace);
+	const provider = new MdVsCodeLinkProvider(linkProvider);
 	return provider.provideDocumentLinks(doc, noopToken);
 }
 
@@ -29,7 +32,7 @@ function assertLinksEqual(actualLinks: readonly vscode.DocumentLink[], expectedR
 	}
 }
 
-suite('markdown.DocumentLinkProvider', () => {
+suite('Markdown: DocumentLinkProvider', () => {
 	test('Should not return anything for empty document', async () => {
 		const links = await getLinksForFile('');
 		assert.strictEqual(links.length, 0);
@@ -101,6 +104,21 @@ suite('markdown.DocumentLinkProvider', () => {
 		}
 	});
 
+	test('Should ignore texts in brackets inside link title (#150921)', async () => {
+		{
+			const links = await getLinksForFile('[some [inner bracket pairs] in title](<link>)');
+			assertLinksEqual(links, [
+				new vscode.Range(0, 39, 0, 43),
+			]);
+		}
+		{
+			const links = await getLinksForFile('[some [inner bracket pairs] in title](link)');
+			assertLinksEqual(links, [
+				new vscode.Range(0, 38, 0, 42)
+			]);
+		}
+	});
+
 	test('Should handle two links without space', async () => {
 		const links = await getLinksForFile('a ([test](test)[test2](test2)) c');
 		assertLinksEqual(links, [
@@ -113,24 +131,24 @@ suite('markdown.DocumentLinkProvider', () => {
 		{
 			const links = await getLinksForFile('[![alt text](image.jpg)](https://example.com)');
 			assertLinksEqual(links, [
+				new vscode.Range(0, 25, 0, 44),
 				new vscode.Range(0, 13, 0, 22),
-				new vscode.Range(0, 25, 0, 44)
 			]);
 		}
 		{
 			const links = await getLinksForFile('[![a]( whitespace.jpg )]( https://whitespace.com )');
 			assertLinksEqual(links, [
+				new vscode.Range(0, 26, 0, 48),
 				new vscode.Range(0, 7, 0, 21),
-				new vscode.Range(0, 26, 0, 48)
 			]);
 		}
 		{
 			const links = await getLinksForFile('[![a](img1.jpg)](file1.txt) text [![a](img2.jpg)](file2.txt)');
 			assertLinksEqual(links, [
-				new vscode.Range(0, 6, 0, 14),
 				new vscode.Range(0, 17, 0, 26),
-				new vscode.Range(0, 39, 0, 47),
+				new vscode.Range(0, 6, 0, 14),
 				new vscode.Range(0, 50, 0, 59),
+				new vscode.Range(0, 39, 0, 47),
 			]);
 		}
 	});
@@ -408,5 +426,22 @@ suite('markdown.DocumentLinkProvider', () => {
 		assertLinksEqual(links, [new vscode.Range(0, 8, 0, 13)]);
 	});
 
-
+	test('Should find links with titles', async () => {
+		const links = await getLinksForFile(joinLines(
+			`[link](<no such.md> "text")`,
+			`[link](<no such.md> 'text')`,
+			`[link](<no such.md> (text))`,
+			`[link](no-such.md "text")`,
+			`[link](no-such.md 'text')`,
+			`[link](no-such.md (text))`,
+		));
+		assertLinksEqual(links, [
+			new vscode.Range(0, 8, 0, 18),
+			new vscode.Range(1, 8, 1, 18),
+			new vscode.Range(2, 8, 2, 18),
+			new vscode.Range(3, 7, 3, 17),
+			new vscode.Range(4, 7, 4, 17),
+			new vscode.Range(5, 7, 5, 17),
+		]);
+	});
 });
