@@ -4,8 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
+import { ILogger } from '../logging';
 import { MdTableOfContentsProvider, TocEntry } from '../tableOfContents';
-import { SkinnyTextDocument } from '../workspaceContents';
+import { ITextDocument } from '../types/textDocument';
 
 interface MarkdownSymbol {
 	readonly level: number;
@@ -17,15 +18,17 @@ export class MdDocumentSymbolProvider implements vscode.DocumentSymbolProvider {
 
 	constructor(
 		private readonly tocProvider: MdTableOfContentsProvider,
+		private readonly logger: ILogger,
 	) { }
 
-	public async provideDocumentSymbolInformation(document: SkinnyTextDocument): Promise<vscode.SymbolInformation[]> {
-		const toc = await this.tocProvider.get(document.uri);
+	public async provideDocumentSymbolInformation(document: ITextDocument): Promise<vscode.SymbolInformation[]> {
+		this.logger.verbose('DocumentSymbolProvider', `provideDocumentSymbolInformation - ${document.uri}`);
+		const toc = await this.tocProvider.getForDocument(document);
 		return toc.entries.map(entry => this.toSymbolInformation(entry));
 	}
 
-	public async provideDocumentSymbols(document: SkinnyTextDocument): Promise<vscode.DocumentSymbol[]> {
-		const toc = await this.tocProvider.get(document.uri);
+	public async provideDocumentSymbols(document: ITextDocument): Promise<vscode.DocumentSymbol[]> {
+		const toc = await this.tocProvider.getForDocument(document);
 		const root: MarkdownSymbol = {
 			level: -Infinity,
 			children: [],
@@ -44,13 +47,12 @@ export class MdDocumentSymbolProvider implements vscode.DocumentSymbolProvider {
 		const symbol = this.toDocumentSymbol(entry);
 		symbol.children = [];
 
-		while (parent && entry.level <= parent.level) {
+		while (entry.level <= parent.level) {
 			parent = parent.parent!;
 		}
 		parent.children.push(symbol);
 		this.buildTree({ level: entry.level, children: symbol.children, parent }, entries.slice(1));
 	}
-
 
 	private toSymbolInformation(entry: TocEntry): vscode.SymbolInformation {
 		return new vscode.SymbolInformation(
@@ -77,6 +79,7 @@ export class MdDocumentSymbolProvider implements vscode.DocumentSymbolProvider {
 export function registerDocumentSymbolSupport(
 	selector: vscode.DocumentSelector,
 	tocProvider: MdTableOfContentsProvider,
+	logger: ILogger,
 ): vscode.Disposable {
-	return vscode.languages.registerDocumentSymbolProvider(selector, new MdDocumentSymbolProvider(tocProvider));
+	return vscode.languages.registerDocumentSymbolProvider(selector, new MdDocumentSymbolProvider(tocProvider, logger));
 }

@@ -4,12 +4,14 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import { MdDocumentInfoCache } from './languageFeatures/workspaceCache';
+import { ILogger } from './logging';
 import { IMdParser } from './markdownEngine';
 import { githubSlugifier, Slug, Slugifier } from './slugify';
+import { ITextDocument } from './types/textDocument';
 import { Disposable } from './util/dispose';
 import { isMarkdownFile } from './util/file';
-import { MdWorkspaceContents, SkinnyTextDocument } from './workspaceContents';
+import { MdDocumentInfoCache } from './util/workspaceCache';
+import { IMdWorkspace } from './workspace';
 
 export interface TocEntry {
 	readonly slug: Slug;
@@ -63,12 +65,12 @@ export interface TocEntry {
 
 export class TableOfContents {
 
-	public static async create(parser: IMdParser, document: SkinnyTextDocument,): Promise<TableOfContents> {
+	public static async create(parser: IMdParser, document: ITextDocument,): Promise<TableOfContents> {
 		const entries = await this.buildToc(parser, document);
 		return new TableOfContents(entries, parser.slugifier);
 	}
 
-	public static async createForDocumentOrNotebook(parser: IMdParser, document: SkinnyTextDocument): Promise<TableOfContents> {
+	public static async createForDocumentOrNotebook(parser: IMdParser, document: ITextDocument): Promise<TableOfContents> {
 		if (document.uri.scheme === 'vscode-notebook-cell') {
 			const notebook = vscode.workspace.notebookDocuments
 				.find(notebook => notebook.getCells().some(cell => cell.document === document));
@@ -89,7 +91,7 @@ export class TableOfContents {
 		return this.create(parser, document);
 	}
 
-	private static async buildToc(parser: IMdParser, document: SkinnyTextDocument): Promise<TocEntry[]> {
+	private static async buildToc(parser: IMdParser, document: ITextDocument): Promise<TocEntry[]> {
 		const toc: TocEntry[] = [];
 		const tokens = await parser.tokenize(document);
 
@@ -182,10 +184,12 @@ export class MdTableOfContentsProvider extends Disposable {
 
 	constructor(
 		parser: IMdParser,
-		workspaceContents: MdWorkspaceContents,
+		workspace: IMdWorkspace,
+		private readonly logger: ILogger,
 	) {
 		super();
-		this._cache = this._register(new MdDocumentInfoCache<TableOfContents>(workspaceContents, doc => {
+		this._cache = this._register(new MdDocumentInfoCache<TableOfContents>(workspace, doc => {
+			this.logger.verbose('TableOfContentsProvider', `create - ${doc.uri}`);
 			return TableOfContents.create(parser, doc);
 		}));
 	}
@@ -194,7 +198,7 @@ export class MdTableOfContentsProvider extends Disposable {
 		return await this._cache.get(resource) ?? TableOfContents.empty;
 	}
 
-	public getForDocument(doc: SkinnyTextDocument): Promise<TableOfContents> {
+	public getForDocument(doc: ITextDocument): Promise<TableOfContents> {
 		return this._cache.getForDocument(doc);
 	}
 }
