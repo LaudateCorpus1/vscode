@@ -340,7 +340,7 @@ export abstract class AbstractTaskService extends Disposable implements ITaskSer
 			processContext.set(process && !isVirtual);
 		}
 		this._onDidRegisterSupportedExecutions.fire();
-		if (this._jsonTasksSupported && !this._tasksReconnected) {
+		if (this._configurationService.getValue(TaskSettingId.Reconnection) === true && this._jsonTasksSupported && !this._tasksReconnected) {
 			this._reconnectTasks();
 		}
 	}
@@ -396,13 +396,11 @@ export abstract class AbstractTaskService extends Disposable implements ITaskSer
 								properties: {
 									type: {
 										type: 'string',
-										description: nls.localize('runTask.type', "The contributed task type"),
-										enum: Array.from(this._providerTypes.values()).map(provider => provider)
+										description: nls.localize('runTask.type', "The contributed task type")
 									},
-									taskName: {
+									task: {
 										type: 'string',
-										description: nls.localize('runTask.taskName', "The task's label or a term to filter by"),
-										enum: await this.tasks().then((tasks) => tasks.map(t => t._label))
+										description: nls.localize('runTask.task', "The task's label or a term to filter by")
 									}
 								}
 							}
@@ -2174,7 +2172,7 @@ export abstract class AbstractTaskService extends Disposable implements ITaskSer
 	}
 
 	private get _jsonTasksSupported(): boolean {
-		return ShellExecutionSupportedContext.getValue(this._contextKeyService) === true && ProcessExecutionSupportedContext.getValue(this._contextKeyService) === true && !Platform.isWeb;
+		return ShellExecutionSupportedContext.getValue(this._contextKeyService) === true && ProcessExecutionSupportedContext.getValue(this._contextKeyService) === true;
 	}
 
 	private _computeWorkspaceFolderTasks(workspaceFolder: IWorkspaceFolder, runSource: TaskRunSource = TaskRunSource.User): Promise<IWorkspaceFolderTaskResult> {
@@ -2702,7 +2700,7 @@ export abstract class AbstractTaskService extends Disposable implements ITaskSer
 			})) === true;
 	}
 
-	private async _runTaskCommand(filter?: { type?: string; taskName?: string } | string): Promise<void> {
+	private async _runTaskCommand(filter?: any | { type?: string; task?: string }): Promise<void> {
 		if (!this._canRunCommand()) {
 			return;
 		}
@@ -2710,8 +2708,8 @@ export abstract class AbstractTaskService extends Disposable implements ITaskSer
 		let typeFilter: boolean = false;
 		if (filter && typeof filter !== 'string') {
 			// name takes precedence
-			typeFilter = !filter?.taskName && !!filter?.type;
-			filter = filter?.taskName || filter?.type;
+			typeFilter = !filter?.task && !!filter?.type;
+			filter = filter?.task || filter?.type;
 		}
 
 		const taskIdentifier: KeyedTaskIdentifier | undefined | string = this._getTaskIdentifier(filter);
@@ -2830,6 +2828,10 @@ export abstract class AbstractTaskService extends Disposable implements ITaskSer
 						taskQuickPick.dispose();
 						return;
 					} else {
+						if (!!filter) {
+							// filter yielded no results, so show all
+							this._runTaskCommand();
+						}
 						return;
 					}
 				} else {
