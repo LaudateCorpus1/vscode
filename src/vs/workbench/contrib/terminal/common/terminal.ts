@@ -8,12 +8,12 @@ import { Event } from 'vs/base/common/event';
 import { IDisposable } from 'vs/base/common/lifecycle';
 import { IProcessEnvironment, OperatingSystem } from 'vs/base/common/platform';
 import { IExtensionPointDescriptor } from 'vs/workbench/services/extensions/common/extensionsRegistry';
-import { IProcessDataEvent, IProcessReadyEvent, IShellLaunchConfig, ITerminalChildProcess, ITerminalLaunchError, ITerminalProfile, ITerminalProfileObject, ITerminalsLayoutInfo, ITerminalsLayoutInfoById, TerminalIcon, TerminalLocationString, IProcessProperty, TitleEventSource, ProcessPropertyType, IFixedTerminalDimensions, IExtensionTerminalProfile, ICreateContributedTerminalProfileOptions, IProcessPropertyMap, ITerminalEnvironment, ITerminalProcessOptions, ITerminalContributions, ITerminalOutputMatcher, ITerminalOutputMatch } from 'vs/platform/terminal/common/terminal';
+import { IProcessDataEvent, IProcessReadyEvent, IShellLaunchConfig, ITerminalChildProcess, ITerminalLaunchError, ITerminalProfile, ITerminalProfileObject, ITerminalsLayoutInfo, ITerminalsLayoutInfoById, TerminalIcon, TerminalLocationString, IProcessProperty, TitleEventSource, ProcessPropertyType, IFixedTerminalDimensions, IExtensionTerminalProfile, ICreateContributedTerminalProfileOptions, IProcessPropertyMap, ITerminalEnvironment, ITerminalProcessOptions, ITerminalContributions } from 'vs/platform/terminal/common/terminal';
 import { IEnvironmentVariableInfo } from 'vs/workbench/contrib/terminal/common/environmentVariable';
 import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
 import { URI } from 'vs/base/common/uri';
 import { Registry } from 'vs/platform/registry/common/platform';
-import { IMarkProperties, ISerializedCommandDetectionCapability, ITerminalCapabilityStore, IXtermMarker } from 'vs/platform/terminal/common/capabilities/capabilities';
+import { ISerializedCommandDetectionCapability, ITerminalCapabilityStore } from 'vs/platform/terminal/common/capabilities/capabilities';
 import { ThemeIcon } from 'vs/base/common/themables';
 import { IProcessDetails } from 'vs/platform/terminal/common/terminalProcess';
 import Severity from 'vs/base/common/severity';
@@ -304,6 +304,7 @@ export interface ITerminalConfiguration {
 		enabled: boolean;
 		decorationsEnabled: boolean;
 	};
+	enableImages: boolean;
 	smoothScrolling: boolean;
 }
 
@@ -338,18 +339,7 @@ export interface IRemoteTerminalAttachTarget {
 	icon: URI | { light: URI; dark: URI } | { id: string; color?: { id: string } } | undefined;
 	color: string | undefined;
 	fixedDimensions: IFixedTerminalDimensions | undefined;
-}
-
-export interface ITerminalCommand {
-	command: string;
-	timestamp: number;
-	cwd?: string;
-	exitCode?: number;
-	marker?: IXtermMarker;
-	markProperties?: IMarkProperties;
-	hasOutput(): boolean;
-	getOutput(): string | undefined;
-	getOutputMatch(outputMatcher: ITerminalOutputMatcher): ITerminalOutputMatch | undefined;
+	shellIntegrationNonce: string;
 }
 
 export interface IBeforeProcessDataEvent {
@@ -380,6 +370,7 @@ export interface ITerminalProcessManager extends IDisposable {
 	readonly hasChildProcesses: boolean;
 	readonly backend: ITerminalBackend | undefined;
 	readonly capabilities: ITerminalCapabilityStore;
+	readonly shellIntegrationNonce: string;
 	readonly extEnvironmentVariableCollection: IMergedEnvironmentVariableCollection | undefined;
 
 	readonly onPtyDisconnect: Event<void>;
@@ -401,15 +392,16 @@ export interface ITerminalProcessManager extends IDisposable {
 	setDimensions(cols: number, rows: number): Promise<void>;
 	setDimensions(cols: number, rows: number, sync: false): Promise<void>;
 	setDimensions(cols: number, rows: number, sync: true): void;
+	clearBuffer(): Promise<void>;
 	setUnicodeVersion(version: '6' | '11'): Promise<void>;
 	acknowledgeDataEvent(charCount: number): void;
 	processBinary(data: string): void;
 
 	getLatency(): Promise<number>;
 	refreshProperty<T extends ProcessPropertyType>(type: T): Promise<IProcessPropertyMap[T]>;
-	updateProperty<T extends ProcessPropertyType>(property: T, value: IProcessPropertyMap[T]): void;
+	updateProperty<T extends ProcessPropertyType>(property: T, value: IProcessPropertyMap[T]): Promise<void>;
 	getBackendOS(): Promise<OperatingSystem>;
-	freePortKillProcess(port: string): void;
+	freePortKillProcess(port: string): Promise<void>;
 }
 
 export const enum ProcessState {
@@ -506,6 +498,8 @@ export const enum TerminalCommandId {
 	RunRecentCommand = 'workbench.action.terminal.runRecentCommand',
 	FocusAccessibleBuffer = 'workbench.action.terminal.focusAccessibleBuffer',
 	NavigateAccessibleBuffer = 'workbench.action.terminal.navigateAccessibleBuffer',
+	AccessibleBufferGoToNextCommand = 'workbench.action.terminal.accessibleBufferGoToNextCommand',
+	AccessibleBufferGoToPreviousCommand = 'workbench.action.terminal.accessibleBufferGoToPreviousCommand',
 	CopyLastCommandOutput = 'workbench.action.terminal.copyLastCommandOutput',
 	GoToRecentDirectory = 'workbench.action.terminal.goToRecentDirectory',
 	CopyAndClearSelection = 'workbench.action.terminal.copyAndClearSelection',
@@ -534,6 +528,7 @@ export const enum TerminalCommandId {
 	FocusPreviousPane = 'workbench.action.terminal.focusPreviousPane',
 	ShowTabs = 'workbench.action.terminal.showTabs',
 	CreateTerminalEditor = 'workbench.action.createTerminalEditor',
+	CreateTerminalEditorSameGroup = 'workbench.action.createTerminalEditorSameGroup',
 	CreateTerminalEditorSide = 'workbench.action.createTerminalEditorSide',
 	FocusTabs = 'workbench.action.terminal.focusTabs',
 	FocusNextPane = 'workbench.action.terminal.focusNextPane',
@@ -742,7 +737,8 @@ export const DEFAULT_COMMANDS_TO_SKIP_SHELL: string[] = [
 	'workbench.action.togglePanel',
 	'workbench.action.quickOpenView',
 	'workbench.action.toggleMaximizedPanel',
-	'notification.acceptPrimaryAction'
+	'notification.acceptPrimaryAction',
+	'runCommands'
 ];
 
 export const terminalContributionsDescriptor: IExtensionPointDescriptor<ITerminalContributions> = {

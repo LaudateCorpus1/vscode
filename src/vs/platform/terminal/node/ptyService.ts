@@ -257,6 +257,10 @@ export class PtyService extends Disposable implements IPtyService {
 		this._throwIfNoPty(id).setIcon(userInitiated, icon, color);
 	}
 
+	async clearBuffer(id: number): Promise<void> {
+		this._throwIfNoPty(id).clearBuffer();
+	}
+
 	async refreshProperty<T extends ProcessPropertyType>(id: number, type: T): Promise<IProcessPropertyMap[T]> {
 		return this._throwIfNoPty(id).refreshProperty(type);
 	}
@@ -482,7 +486,8 @@ export class PtyService extends Disposable implements IPtyService {
 			hideFromUser: persistentProcess.shellLaunchConfig.hideFromUser,
 			isFeatureTerminal: persistentProcess.shellLaunchConfig.isFeatureTerminal,
 			type: persistentProcess.shellLaunchConfig.type,
-			hasChildProcesses: persistentProcess.hasChildProcesses
+			hasChildProcesses: persistentProcess.hasChildProcesses,
+			shellIntegrationNonce: persistentProcess.processLaunchOptions.options.shellIntegration.nonce
 		};
 	}
 
@@ -609,6 +614,7 @@ class PersistentTerminalProcess extends Disposable {
 			reconnectConstants.scrollback,
 			unicodeVersion,
 			reviveBuffer,
+			processLaunchOptions.options.shellIntegration.nonce,
 			shouldPersistTerminal ? rawReviveBuffer : undefined,
 			this._logService
 		);
@@ -751,6 +757,9 @@ class PersistentTerminalProcess extends Disposable {
 		}
 		return this._terminalProcess.resize(cols, rows);
 	}
+	async clearBuffer(): Promise<void> {
+		this._serializer.clearBuffer();
+	}
 	setUnicodeVersion(version: '6' | '11'): void {
 		this.unicodeVersion = version;
 		this._serializer.setUnicodeVersion?.(version);
@@ -882,6 +891,7 @@ class XtermSerializer implements ITerminalSerializer {
 		scrollback: number,
 		unicodeVersion: '6' | '11',
 		reviveBufferWithRestoreMessage: string | undefined,
+		shellIntegrationNonce: string,
 		private _rawReviveBuffer: string | undefined,
 		logService: ILogService
 	) {
@@ -895,7 +905,7 @@ class XtermSerializer implements ITerminalSerializer {
 			this._xterm.writeln(reviveBufferWithRestoreMessage);
 		}
 		this.setUnicodeVersion(unicodeVersion);
-		this._shellIntegrationAddon = new ShellIntegrationAddon(true, undefined, logService);
+		this._shellIntegrationAddon = new ShellIntegrationAddon(shellIntegrationNonce, true, undefined, logService);
 		this._xterm.loadAddon(this._shellIntegrationAddon);
 	}
 
@@ -910,6 +920,10 @@ class XtermSerializer implements ITerminalSerializer {
 
 	handleResize(cols: number, rows: number): void {
 		this._xterm.resize(cols, rows);
+	}
+
+	clearBuffer(): void {
+		this._xterm.clear();
 	}
 
 	async generateReplayEvent(normalBufferOnly?: boolean, restoreToLastReviveBuffer?: boolean): Promise<IPtyHostProcessReplayEvent> {
@@ -996,6 +1010,7 @@ interface ITerminalSerializer {
 	handleData(data: string): void;
 	freeRawReviveBuffer(): void;
 	handleResize(cols: number, rows: number): void;
+	clearBuffer(): void;
 	generateReplayEvent(normalBufferOnly?: boolean, restoreToLastReviveBuffer?: boolean): Promise<IPtyHostProcessReplayEvent>;
 	setUnicodeVersion?(version: '6' | '11'): void;
 }
